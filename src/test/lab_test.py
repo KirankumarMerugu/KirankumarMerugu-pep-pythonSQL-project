@@ -1,29 +1,38 @@
-import os.path
+import os
 import sqlite3
 import csv
 import unittest
+import sys
 
-from src.main.main import load_and_clean_users, return_cursor, load_and_clean_call_logs, write_ordered_calls, write_user_analytics
+# Add the main project directory to the Python path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
+from src.main.main import (
+    load_and_clean_users,
+    return_cursor,
+    load_and_clean_call_logs,
+    write_ordered_calls,
+    write_user_analytics
+)
 
 
 class ProjectTests(unittest.TestCase):
 
     def setUp(self):
+        """Set up the database connection and recreate tables for each test."""
+        self.conn = sqlite3.connect(':memory:')  # Use an in-memory database for testing
+        self.cursor = self.conn.cursor()
 
-        self.cursor = return_cursor()
-
-        # Delete any existing tables
+        # Recreate `users` and `callLogs` tables
         self.cursor.execute('DROP TABLE IF EXISTS users')
         self.cursor.execute('DROP TABLE IF EXISTS callLogs')
 
-        # Create tables
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS users (
                                 userId INTEGER PRIMARY KEY,
                                 firstName TEXT,
                                 lastName TEXT
                               )'''
                             )
-
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS callLogs (
                                 callId INTEGER PRIMARY KEY, 
                                 phoneNumber TEXT,
@@ -32,141 +41,110 @@ class ProjectTests(unittest.TestCase):
                                 direction TEXT,
                                 userId INTEGER,
                                 FOREIGN KEY (userId) REFERENCES users(userId)
-                            )'''
+                              )'''
                             )
 
-        print("Tables created from setUp.")
+    def tearDown(self):
+        """Tear down the database connection after each test."""
+        self.conn.close()
 
-    # This test will a csv file of user data to assure incomplete records are left out.
     def test_users_table_has_clean_data(self):
+        """Test that the `users` table contains only clean data after loading."""
         base_dir = os.path.dirname(os.path.abspath(__file__))
+        abs_file_path = os.path.join(base_dir, 'testUsers.csv')
 
-        # Construct the absolute path to testUsers.csv
-        abs_file_path = os.path.join(base_dir,'testUsers.csv')
-        # invoke load_and_clean_users, with testUsers.csv
-        load_and_clean_users(abs_file_path)
+        # Load users into the database
+        load_and_clean_users(abs_file_path, self.cursor)
 
-        # select all records from the users table
-        self.cursor.execute('''SELECT * FROM users''')
-
-        # get the results and number of records
+        # Fetch all records from the `users` table
+        self.cursor.execute('SELECT * FROM users')
         results = self.cursor.fetchall()
-        num_records = len(results)
 
-        # assert that there are 2 records (the amount that should be left over)
-        self.assertEqual(2, num_records)
+        # Assert that there are exactly 2 valid records in the `users` table
+        self.assertEqual(len(results), 2)
 
-        # assert that each result has the correct number of columns (3)
-        # assert that the data coming back has a value for every column
+        # Assert each record contains non-null values for all columns
         for result in results:
-            self.assertEqual(3, len(result))
+            self.assertEqual(len(result), 3)
             for column in result:
                 self.assertIsNotNone(column)
 
-        # close the cursor
-        self.cursor.close()
-
-    # This test will a csv file of call data to assure incomplete records are left out.
     def test_calllogs_table_has_clean_data(self):
+        """Test that the `callLogs` table contains only clean data after loading."""
         base_dir = os.path.dirname(os.path.abspath(__file__))
+        abs_file_path = os.path.join(base_dir, 'testCallLogs.csv')
 
-        # Construct the absolute path to testUsers.csv
-        abs_file_path = os.path.join(base_dir,'testCallLogs.csv')
+        # Load call logs into the database
+        load_and_clean_call_logs(abs_file_path, self.cursor)
 
-        # invoke load_and_clean_call_logs, with testCallLogs.csv
-        load_and_clean_call_logs(abs_file_path)
-
-        # select all records from the callLogs table
-        self.cursor.execute('''SELECT * FROM callLogs''')
-
-        # get the results and number of records
+        # Fetch all records from the `callLogs` table
+        self.cursor.execute('SELECT * FROM callLogs')
         results = self.cursor.fetchall()
 
-        num_records = len(results)
+        # Assert that there are exactly 10 valid records in the `callLogs` table
+        self.assertEqual(len(results), 10)
 
-        # assert that there are 10 records (the amount that should be left over)
-        self.assertEqual(10, num_records)
-        # assert that the data coming back has a value for every column
+        # Assert each record contains non-null values for all columns
         for result in results:
-            self.assertEqual(6, len(result))
+            self.assertEqual(len(result), 6)
             for column in result:
                 self.assertIsNotNone(column)
 
-    # This test will test analytics data to testUserAnalytics.csv - average call time, and number of calls per user.
     def test_user_analytics_are_correct(self):
-        dir=os.path.dirname(os.path.abspath(__file__))
+        """Test that the user analytics are calculated correctly."""
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        test_call_logs_csv_path = os.path.join(base_dir, 'testCallLogs.csv')
+        user_analytics_file_path = os.path.join(base_dir, 'testUserAnalytics.csv')
 
-        # get absolute path of testCallLogs.csv
-        test_call_logs_csv_path = os.path.join(dir, 'testCallLogs.csv')
+        # Load call logs and write analytics
+        load_and_clean_call_logs(test_call_logs_csv_path, self.cursor)
+        write_user_analytics(user_analytics_file_path, self.cursor)
 
-        # get absolute path of testUserAnalytics.csv
-        user_analytics_file_path=os.path.join(dir,'testUserAnalytics.csv')
-
-        # List that will hold the contents of testUserAnalytics.csv
+        # Read analytics data from the output file
         user_analytics = []
-
-        load_and_clean_call_logs(test_call_logs_csv_path)
-        write_user_analytics(user_analytics_file_path)
-
-        # Get the data from testUserAnalytics.csv
         with open(user_analytics_file_path, 'r') as file:
-
-            # Skip the first line
-            next(file)
-
-            # Read the contents of the file line by line, saving them to user_analytics
+            next(file)  # Skip header
             for line in file:
                 user_analytics.append(line.strip().split(','))
 
-        # order user_analytics by userId ascending
+        # Sort user analytics by userId
         user_analytics.sort(key=lambda x: int(x[0]))
 
-        # ensure that the record with userId 4 has an avgDuration of 55 and a count of 2
-        self.assertEqual(105.0, float(user_analytics[0][1]))
-        self.assertEqual(4, int(user_analytics[0][2]))
+        # Assert correctness of analytics data
+        self.assertEqual(float(user_analytics[0][1]), 105.0)
+        self.assertEqual(int(user_analytics[0][2]), 4)
 
-        # ensure that the record with userId 2 has an avgDuration of 42.5 and a count of 4
-        self.assertEqual(42.5, float(user_analytics[1][1]))
-        self.assertEqual(4, int(user_analytics[1][2]))
+        self.assertEqual(float(user_analytics[1][1]), 42.5)
+        self.assertEqual(int(user_analytics[1][2]), 4)
 
-        # ensure that the record with userId 1 has an avgDuration of 105.0 and a count of 4
-        self.assertEqual(55.0, float(user_analytics[2][1]))
-        self.assertEqual(2, int(user_analytics[2][2]))
+        self.assertEqual(float(user_analytics[2][1]), 55.0)
+        self.assertEqual(int(user_analytics[2][2]), 2)
 
     def test_call_logs_are_ordered(self):
+        """Test that call logs are ordered correctly by userId and startTime."""
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        test_call_logs_path = os.path.join(base_dir, 'testCallLogs.csv')
+        test_ordered_calls_path = os.path.join(base_dir, 'testOrderedCalls.csv')
 
-        # Get the directory of the current test file
-        test_dir = os.path.dirname(os.path.abspath(__file__))
+        # Load call logs and write ordered calls
+        load_and_clean_call_logs(test_call_logs_path, self.cursor)
+        write_ordered_calls(test_ordered_calls_path, self.cursor)
 
-        # get absolute path to testCallLogs.csv
-        test_call_logs_path = os.path.join(test_dir, 'testCallLogs.csv')
-
-        # Get absolute path to testOrderedCalls.csv
-        test_ordered_calls_path = os.path.join(test_dir, 'testOrderedCalls.csv')
-
-        # Load and clean call logs from testCallLogs.csv
-        load_and_clean_call_logs(test_call_logs_path)
-
-        #load_and_clean_call_logs("testCallLogs.csv")
-        write_ordered_calls(test_ordered_calls_path)
-        # List that will hold the contents of orderedCalls.csv
+        # Read ordered calls data from the output file
         ordered_calls = []
-        #Get the data from orderedCalls.csv
         with open(test_ordered_calls_path, 'r') as file:
-            # Skip the first line
-            next(file)
-            # Read the contents of the file line by line, saving them to ordered_calls
+            next(file)  # Skip header
             for line in file:
                 ordered_calls.append(line.strip().split(','))
 
-        # Assert that the userId in the first record in ordered_calls is 1
-        self.assertEqual(1, int(ordered_calls[0][5]))
-        # Assert that the userId in the fifth record is 2
-        self.assertEqual(2, int(ordered_calls[4][5]))
-        # Assert that the userId in the last record is 4
-        self.assertEqual(4, int(ordered_calls[-1][5]))
+        # Assert correctness of order in the output
+        self.assertEqual(int(ordered_calls[0][5]), 1)
+        self.assertEqual(int(ordered_calls[4][5]), 2)
+        self.assertEqual(int(ordered_calls[-1][5]), 4)
 
-        # Assert that startTime in the first record is < the startTime in the second record
         self.assertTrue(int(ordered_calls[0][2]) < int(ordered_calls[1][2]))
-        # Assert that the startTime in the penultimate record is < the startTime in the last record
         self.assertTrue(int(ordered_calls[-2][2]) < int(ordered_calls[-1][2]))
+
+
+if __name__ == '__main__':
+    unittest.main()
